@@ -26,6 +26,7 @@ interface MessMembershipRepository : JpaRepository<MessMembership, String> {
     fun findByUserIdAndStatus(userId: String, status: MembershipStatus): Optional<MessMembership>
     fun findByMessIdAndUserId(messId: String, userId: String): Optional<MessMembership>
     fun findAllByMessId(messId: String): List<MessMembership>
+    fun findAllByMessIdAndStatus(messId: String, status: MembershipStatus): List<MessMembership>
     fun findAllByMessIdAndRole(messId: String, role: UserRole): List<MessMembership>
     fun existsByUserIdAndStatus(userId: String, status: MembershipStatus): Boolean
 }
@@ -45,6 +46,7 @@ interface MealSessionConfigRepository : JpaRepository<MealSessionConfig, String>
 interface DiningCycleRepository : JpaRepository<DiningCycle, String> {
     fun findFirstByMessIdAndStatus(messId: String, status: com.example.messmate_backend.model.enums.CycleStatus): Optional<DiningCycle>
     fun findAllByMessIdOrderByCycleNumberDesc(messId: String): List<DiningCycle>
+    fun findAllByStatus(status: com.example.messmate_backend.model.enums.CycleStatus): List<DiningCycle>
 }
 
 @Repository
@@ -138,6 +140,13 @@ interface MealJoinRequestRepository : JpaRepository<MealJoinRequest, String> {
 interface CycleConfigurationRepository : JpaRepository<CycleConfiguration, String> {
     fun findByCycleId(cycleId: String): Optional<CycleConfiguration>
     fun findFirstByMessIdOrderByCreatedAtDesc(messId: String): Optional<CycleConfiguration>
+}
+
+@Repository
+interface DeviceTokenRepository : JpaRepository<com.example.messmate_backend.entity.DeviceToken, String> {
+    fun findByToken(token: String): Optional<com.example.messmate_backend.entity.DeviceToken>
+    fun findAllByUserId(userId: String): List<com.example.messmate_backend.entity.DeviceToken>
+    fun deleteByToken(token: String)
 }
 
 typealias MealRepository = MessRepository

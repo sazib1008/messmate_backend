@@ -40,6 +40,7 @@ class SecurityConfig(
             .authorizeHttpRequests { auth ->
                 auth
                     .requestMatchers("/api/auth/**").permitAll()
+                    .requestMatchers("/api/health", "/healthz", "/").permitAll()
                     .requestMatchers("/error").permitAll()
                     .requestMatchers(HttpMethod.GET, "/api/menus/**").authenticated()
                     .requestMatchers("/api/menus/**").hasAnyRole("OWNER", "PRIMARY_MANAGER", "MANAGER")

@@ -24,7 +24,8 @@ class MessService(
     private val diningCycleRepository: DiningCycleRepository,
     private val cycleConfigRepository: CycleConfigurationRepository,
     private val joinRequestRepository: MealJoinRequestRepository,
-    private val menuService: MenuService
+    private val menuService: MenuService,
+    private val notificationService: NotificationService
 ) {
 
     private val dhakaZone = ZoneId.of("Asia/Dhaka")
@@ -227,6 +228,28 @@ class MessService(
         joinRequest.mess = meal
         val saved = joinRequestRepository.save(joinRequest)
 
+        try {
+            val managerMemberships = membershipRepository.findAllByMessIdAndStatus(meal.id, MembershipStatus.ACTIVE)
+                .filter { it.role.isOwnerOrManager }
+            val managerUserIds = managerMemberships.map { it.userId }
+
+            if (managerUserIds.isNotEmpty()) {
+                notificationService.sendPushToUsers(
+                    userIds = managerUserIds,
+                    title = "New Join Request",
+                    body = "${user.fullName} requested to join ${meal.name}.",
+                    data = mapOf(
+                        "screen" to "join_requests",
+                        "type" to "NEW_JOIN_REQUEST",
+                        "messId" to meal.id,
+                        "requestId" to saved.id
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            // Guard: notifications must never fail the join request creation
+        }
+
         return mapJoinRequestDto(saved)
     }
 
@@ -339,6 +362,31 @@ class MessService(
         }
 
         val updated = joinRequestRepository.save(joinReq)
+
+        try {
+            val isApproved = updated.status == JoinRequestStatus.APPROVED
+            val title = if (isApproved) "Join Request Approved" else "Join Request Declined"
+            val body = if (isApproved)
+                "Your request to join has been approved! Welcome to the mess."
+            else
+                "Your request to join was declined. ${review.notes ?: ""}".trim()
+            val eventType = if (isApproved) "JOIN_REQUEST_APPROVED" else "JOIN_REQUEST_REJECTED"
+
+            notificationService.sendPushToUser(
+                userId = updated.userId,
+                title = title,
+                body = body,
+                data = mapOf(
+                    "screen" to (if (isApproved) "student_home" else "join_mess"),
+                    "type" to eventType,
+                    "messId" to mealId,
+                    "requestId" to updated.id
+                )
+            )
+        } catch (e: Exception) {
+            // Guard: notifications must never fail the review
+        }
+
         return mapJoinRequestDto(updated)
     }
 

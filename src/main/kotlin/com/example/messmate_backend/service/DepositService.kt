@@ -21,7 +21,8 @@ class DepositService(
     private val messMembershipRepository: MessMembershipRepository,
     private val diningCycleRepository: DiningCycleRepository,
     private val balanceLedgerRepository: BalanceLedgerRepository,
-    private val userRepository: UserRepository
+    private val userRepository: UserRepository,
+    private val notificationService: NotificationService
 ) {
 
     private fun resolveUserId(identifier: String): String {
@@ -161,6 +162,31 @@ class DepositService(
         }
 
         val updated = depositRepository.save(deposit)
+
+        try {
+            val isApproved = updated.status == DepositStatus.APPROVED
+            val title = if (isApproved) "Deposit Approved" else "Deposit Rejected"
+            val body = if (isApproved)
+                "Your deposit of ৳${updated.amount} has been approved."
+            else
+                "Your deposit of ৳${updated.amount} was rejected. ${req.rejectionReason ?: ""}".trim()
+            val eventType = if (isApproved) "DEPOSIT_APPROVED" else "DEPOSIT_REJECTED"
+
+            notificationService.sendPushToUser(
+                userId = updated.userId,
+                title = title,
+                body = body,
+                data = mapOf(
+                    "screen" to "wallet",
+                    "type" to eventType,
+                    "depositId" to updated.id,
+                    "amount" to updated.amount.toString()
+                )
+            )
+        } catch (e: Exception) {
+            // Guard: notification failure must never block or roll back the business transaction
+        }
+
         return mapToResponse(updated)
     }
 

@@ -70,7 +70,8 @@ class CycleCalculationService(
     private val studentCycleSummaryRepository: StudentCycleSummaryRepository,
     private val balanceLedgerRepository: BalanceLedgerRepository,
     private val userRepository: UserRepository,
-    private val diningConfigRepository: DiningConfigurationRepository
+    private val diningConfigRepository: DiningConfigurationRepository,
+    private val notificationService: NotificationService
 ) {
 
     private val dhakaZone = ZoneId.of("Asia/Dhaka")
@@ -393,6 +394,26 @@ class CycleCalculationService(
                 )
                 balanceLedgerRepository.save(ledger)
             }
+
+            try {
+                val memberUserIds = membershipRepository.findAllByMessIdAndStatus(messId, MembershipStatus.ACTIVE)
+                    .map { it.userId }
+                if (memberUserIds.isNotEmpty()) {
+                    notificationService.sendPushToUsers(
+                        userIds = memberUserIds,
+                        title = "Cycle #${cycle.cycleNumber} Concluded",
+                        body = "Final settlement completed. Meal rate: ৳${result.mealRate}/unit. View your balance ledger.",
+                        data = mapOf(
+                            "screen" to "wallet",
+                            "type" to "CYCLE_CONCLUDED",
+                            "messId" to messId,
+                            "cycleNumber" to cycle.cycleNumber.toString()
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                // Guard: notification failure must never block cycle completion
+            }
         }
 
         return result
@@ -537,6 +558,26 @@ class CycleCalculationService(
                 )
                 balanceLedgerRepository.save(ledgerEntry)
             }
+        }
+
+        try {
+            val memberUserIds = membershipRepository.findAllByMessIdAndStatus(messId, MembershipStatus.ACTIVE)
+                .map { it.userId }
+            if (memberUserIds.isNotEmpty()) {
+                notificationService.sendPushToUsers(
+                    userIds = memberUserIds,
+                    title = "New Billing Cycle Started",
+                    body = "Cycle #${savedCycle.cycleNumber} has started.",
+                    data = mapOf(
+                        "screen" to "wallet",
+                        "type" to "NEW_CYCLE_STARTED",
+                        "messId" to messId,
+                        "cycleNumber" to savedCycle.cycleNumber.toString()
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            // Guard: notification failure must never block cycle creation
         }
 
         return getActiveCycle(messId)

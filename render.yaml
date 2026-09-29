@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: messmate-backend
+    env: docker
+    dockerfilePath: Dockerfile
+    plan: free
+    region: singapore
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: JPA_DDL_AUTO
+        value: update
+      - key: SHOW_SQL
+        value: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRATION
+        value: 604800000
+      - key: DB_MAX_POOL_SIZE
+        value: 10
+      - key: DB_MIN_IDLE
+        value: 2
+      - key: DB_IDLE_TIMEOUT
+        value: 30000
+      - key: DB_MAX_LIFETIME
+        value: 60000
+      - key: DB_CONNECTION_TIMEOUT
+        value: 30000
