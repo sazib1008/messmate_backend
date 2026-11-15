@@ -466,8 +466,12 @@ class CycleCalculationService(
             )
         }
 
+        if (request.targetActiveDays < 1 || request.targetActiveDays > 365) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Target active days must be between 1 and 365 days")
+        }
+
         val today = LocalDate.now(dhakaZone)
-        val targetDays = if (request.targetActiveDays > 0) request.targetActiveDays else 30
+        val targetDays = request.targetActiveDays
 
         val newCycle = DiningCycle(
             messId = messId,
