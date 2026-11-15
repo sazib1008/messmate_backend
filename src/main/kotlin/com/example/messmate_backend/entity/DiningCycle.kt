@@ -86,7 +86,12 @@ data class CyclePausedDay(
 )
 
 @Entity
-@Table(name = "daily_meal_statuses")
+@Table(
+    name = "daily_meal_statuses",
+    uniqueConstraints = [
+        UniqueConstraint(name = "daily_meal_statuses_user_date_session_key", columnNames = ["userId", "date", "session"])
+    ]
+)
 data class DailyMealStatus(
     @Id
     @Column(name = "id")

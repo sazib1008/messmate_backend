@@ -139,26 +139,36 @@ class MealService(
             }
         }
 
-        // 5. Update or insert daily meal status
-        val existing = dailyMealStatusRepository.findByUserIdAndDateAndSession(user.id, mealDate, session)
-        val statusRecord: DailyMealStatus = if (existing.isPresent) {
-            val current = existing.get()
+        // 5. Update or insert daily meal status with concurrency resilience
+        val statusRecord: DailyMealStatus = try {
+            val existing = dailyMealStatusRepository.findByUserIdAndDateAndSession(user.id, mealDate, session)
+            if (existing.isPresent) {
+                val current = existing.get()
+                current.status = request.status
+                current.unitValue = unitVal
+                current.isAutoCarried = false
+                dailyMealStatusRepository.save(current)
+            } else {
+                val newStatus = DailyMealStatus(
+                    cycleId = cycle.id,
+                    messId = messId,
+                    userId = user.id,
+                    date = mealDate,
+                    session = session,
+                    status = request.status,
+                    unitValue = unitVal,
+                    isAutoCarried = false
+                )
+                dailyMealStatusRepository.save(newStatus)
+            }
+        } catch (ex: org.springframework.dao.DataIntegrityViolationException) {
+            // Concurrency race: another thread inserted between check and save; update existing
+            val current = dailyMealStatusRepository.findByUserIdAndDateAndSession(user.id, mealDate, session)
+                .orElseThrow { ex }
             current.status = request.status
             current.unitValue = unitVal
             current.isAutoCarried = false
             dailyMealStatusRepository.save(current)
-        } else {
-            val newStatus = DailyMealStatus(
-                cycleId = cycle.id,
-                messId = messId,
-                userId = user.id,
-                date = mealDate,
-                session = session,
-                status = request.status,
-                unitValue = unitVal,
-                isAutoCarried = false
-            )
-            dailyMealStatusRepository.save(newStatus)
         }
 
         return DailyMealStatusDto(
