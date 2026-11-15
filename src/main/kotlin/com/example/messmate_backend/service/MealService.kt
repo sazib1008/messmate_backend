@@ -46,6 +46,18 @@ class MealService(
 
     private val dhakaZone = ZoneId.of("Asia/Dhaka")
 
+    private fun parseCutoffTime(cutoffTimeStr: String): LocalTime {
+        val trimmed = cutoffTimeStr.trim()
+        val formatter = java.time.format.DateTimeFormatterBuilder()
+            .appendPattern("[HH:mm][H:mm]")
+            .toFormatter()
+        return try {
+            LocalTime.parse(trimmed, formatter)
+        } catch (e: Exception) {
+            LocalTime.of(12, 0)
+        }
+    }
+
     @Transactional
     fun toggleMeal(userEmail: String, request: ToggleMealRequest): DailyMealStatusDto {
         val user = userRepository.findByEmail(userEmail)
@@ -117,7 +129,7 @@ class MealService(
 
         // Cutoff time check in Asia/Dhaka
         if (mealDate.isEqual(today)) {
-            val cutoff = LocalTime.parse(cutoffTimeStr, DateTimeFormatter.ofPattern("HH:mm"))
+            val cutoff = parseCutoffTime(cutoffTimeStr)
             val now = LocalTime.now(dhakaZone)
             if (now.isAfter(cutoff)) {
                 throw ResponseStatusException(
@@ -204,7 +216,7 @@ class MealService(
         }
 
         if (mealDate.isEqual(today)) {
-            val cutoff = LocalTime.parse(cutoffTimeStr, DateTimeFormatter.ofPattern("HH:mm"))
+            val cutoff = parseCutoffTime(cutoffTimeStr)
             val now = LocalTime.now(dhakaZone)
             if (now.isAfter(cutoff)) {
                 throw ResponseStatusException(
