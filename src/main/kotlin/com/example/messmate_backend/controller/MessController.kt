@@ -103,13 +103,15 @@ class MessController(
     @PreAuthorize("hasAnyRole('OWNER', 'PRIMARY_MANAGER', 'MANAGER')")
     fun updateDiningConfig(
         @PathVariable id: String,
-        @RequestBody request: DiningConfigDto
+        @RequestBody request: DiningConfigDto,
+        authentication: Authentication
     ): ResponseEntity<DiningConfigDto> {
         return ResponseEntity.ok(
             messService.updateDiningConfig(
                 id,
                 request.defaultCarryForward,
-                request.sessions
+                request.sessions,
+                authentication.name
             )
         )
     }

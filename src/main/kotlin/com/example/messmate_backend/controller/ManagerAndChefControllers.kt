@@ -137,10 +137,11 @@ class ManagerAndChefControllers(
     @PreAuthorize("hasAnyRole('CHEF', 'OWNER', 'PRIMARY_MANAGER', 'MANAGER')")
     fun getChefHeadcount(
         @RequestParam messId: String,
-        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) date: LocalDate?
+        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) date: LocalDate?,
+        authentication: Authentication
     ): ResponseEntity<ChefDailyHeadcountResponse> {
         val targetDate = date ?: LocalDate.now(ZoneId.of("Asia/Dhaka"))
-        val response = chefService.getDailyHeadcount(messId, targetDate)
+        val response = chefService.getDailyHeadcount(messId, targetDate, authentication.name)
         return ResponseEntity.ok(response)
     }
 

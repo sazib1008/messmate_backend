@@ -71,13 +71,21 @@ class CycleCalculationService(
     private val balanceLedgerRepository: BalanceLedgerRepository,
     private val userRepository: UserRepository,
     private val diningConfigRepository: DiningConfigurationRepository,
-    private val notificationService: NotificationService
+    private val notificationService: NotificationService,
+    private val effectiveMealService: EffectiveMealService
 ) {
 
     private val dhakaZone = ZoneId.of("Asia/Dhaka")
 
     @Transactional
-    fun getActiveCycle(messId: String): ActiveCycleDto {
+    fun getActiveCycle(messId: String, callerEmail: String? = null): ActiveCycleDto {
+        if (callerEmail != null) {
+            val caller = userRepository.findByEmail(callerEmail)
+                .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Caller not found") }
+            membershipRepository.findByMessIdAndUserId(messId, caller.id)
+                .orElseThrow { ResponseStatusException(HttpStatus.FORBIDDEN, "You do not belong to this Mess") }
+        }
+
         val today = LocalDate.now(dhakaZone)
 
         // Find current active or expiring cycle
@@ -163,7 +171,17 @@ class CycleCalculationService(
     }
 
     @Transactional
-    fun pauseDay(request: PauseDayRequest): ActiveCycleDto {
+    fun pauseDay(request: PauseDayRequest, callerEmail: String? = null): ActiveCycleDto {
+        if (callerEmail != null) {
+            val caller = userRepository.findByEmail(callerEmail)
+                .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Caller not found") }
+            val membership = membershipRepository.findByMessIdAndUserId(request.messId, caller.id)
+                .orElseThrow { ResponseStatusException(HttpStatus.FORBIDDEN, "You do not belong to this Mess") }
+            if (!membership.role.isOwnerOrManager) {
+                throw ResponseStatusException(HttpStatus.FORBIDDEN, "Only Mess Owner or Managers can pause dining days")
+            }
+        }
+
         val cycle = diningCycleRepository.findFirstByMessIdAndStatus(request.messId, CycleStatus.ACTIVE)
             .orElseGet {
                 diningCycleRepository.findFirstByMessIdAndStatus(request.messId, CycleStatus.EXPIRING)
@@ -193,7 +211,22 @@ class CycleCalculationService(
     }
 
     @Transactional
-    fun calculateAndSave(messId: String, isFinal: Boolean = false, confirmForfeitSurplus: Boolean = false): CycleCalculationResult {
+    fun calculateAndSave(
+        messId: String,
+        isFinal: Boolean = false,
+        confirmForfeitSurplus: Boolean = false,
+        callerEmail: String? = null
+    ): CycleCalculationResult {
+        if (callerEmail != null) {
+            val caller = userRepository.findByEmail(callerEmail)
+                .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Caller not found") }
+            val membership = membershipRepository.findByMessIdAndUserId(messId, caller.id)
+                .orElseThrow { ResponseStatusException(HttpStatus.FORBIDDEN, "You do not belong to this Mess") }
+            if (isFinal && !membership.role.isOwnerOrManager) {
+                throw ResponseStatusException(HttpStatus.FORBIDDEN, "Only Mess Owner or Managers can finalize cycle settlement")
+            }
+        }
+
         // Fetch cycle (ACTIVE, EXPIRING, or FINALIZING)
         val cycle = diningCycleRepository.findFirstByMessIdAndStatus(messId, CycleStatus.ACTIVE)
             .orElseGet {
@@ -206,10 +239,7 @@ class CycleCalculationService(
 
         // Cycle Configuration Snapshot
         val cycleConfig = cycleConfigRepository.findByCycleId(cycle.id).orElse(null)
-        val breakfastMultiplier = cycleConfig?.breakfastMultiplier ?: BigDecimal("0.50")
-        val lunchMultiplier = cycleConfig?.lunchMultiplier ?: BigDecimal("1.00")
-        val dinnerMultiplier = cycleConfig?.dinnerMultiplier ?: BigDecimal("1.00")
-        val combinedRule = cycleConfig?.combinedSessionRule ?: "SEPARATE"
+        val diningConfig = diningConfigRepository.findByMessId(messId).orElse(null)
 
         val pausedDays = cyclePausedDayRepository.findAllByCycleId(cycle.id)
         val timeline = CycleTimeline(
@@ -227,47 +257,22 @@ class CycleCalculationService(
         val expenses = expenseRepository.findAllByCycleIdOrderByExpenseDateDesc(cycle.id)
         val totalExpenses = expenses.fold(BigDecimal.ZERO) { acc, exp -> acc.add(exp.amount) }
 
-        // 3. Gather member data & calculate counted units based on CycleConfiguration rules
+        val today = LocalDate.now(dhakaZone)
+
+        // 3. Gather member data & calculate counted units based on unified EffectiveMealService rules
         val memberInputs = memberships.map { m ->
             val userId = m.userId
             val userMeals = dailyMealStatusRepository.findAllByUserIdAndCycleId(userId, cycle.id)
-                .filter { it.status == MealStatus.ON }
 
-            // Group by date for combined session calculations
-            var memberUnits = BigDecimal.ZERO
-            if (combinedRule == "LUNCH_DINNER_COMBINED") {
-                val mealsByDate = userMeals.groupBy { it.date }
-                for ((_, mealsForDay) in mealsByDate) {
-                    val hasBreakfast = mealsForDay.any { it.session == MealSession.BREAKFAST }
-                    val hasLunch = mealsForDay.any { it.session == MealSession.LUNCH }
-                    val hasDinner = mealsForDay.any { it.session == MealSession.DINNER }
-
-                    if (hasBreakfast) memberUnits = memberUnits.add(breakfastMultiplier)
-                    if (hasLunch && hasDinner) {
-                        memberUnits = memberUnits.add(BigDecimal("1.00")) // Lunch+Dinner combined = 1 meal
-                    } else if (hasLunch) {
-                        memberUnits = memberUnits.add(lunchMultiplier)
-                    } else if (hasDinner) {
-                        memberUnits = memberUnits.add(dinnerMultiplier)
-                    }
-                }
-            } else if (combinedRule == "FULL_DAY") {
-                val mealsByDate = userMeals.groupBy { it.date }
-                for ((_, mealsForDay) in mealsByDate) {
-                    val anyMeal = mealsForDay.isNotEmpty()
-                    if (anyMeal) memberUnits = memberUnits.add(BigDecimal("1.00"))
-                }
-            } else {
-                // Default: separate sessions using multipliers
-                for (meal in userMeals) {
-                    val mult = when (meal.session) {
-                        MealSession.BREAKFAST -> breakfastMultiplier
-                        MealSession.LUNCH -> lunchMultiplier
-                        MealSession.DINNER -> dinnerMultiplier
-                    }
-                    memberUnits = memberUnits.add(mult)
-                }
-            }
+            val memberUnits = effectiveMealService.calculateMemberCycleMealUnits(
+                member = m,
+                cycle = cycle,
+                cycleConfig = cycleConfig,
+                diningConfig = diningConfig,
+                pausedDays = pausedDays,
+                persistedRows = userMeals,
+                asOfDate = today
+            )
 
             val guestMeals = guestMealRepository.findAllByCycleIdAndHostUserId(cycle.id, userId)
             val guestUnits = guestMeals.fold(BigDecimal.ZERO) { acc, gm -> acc.add(gm.mealUnits) }
@@ -461,8 +466,12 @@ class CycleCalculationService(
             )
         }
 
+        if (request.targetActiveDays < 1 || request.targetActiveDays > 365) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Target active days must be between 1 and 365 days")
+        }
+
         val today = LocalDate.now(dhakaZone)
-        val targetDays = if (request.targetActiveDays > 0) request.targetActiveDays else 30
+        val targetDays = request.targetActiveDays
 
         val newCycle = DiningCycle(
             messId = messId,
@@ -584,7 +593,14 @@ class CycleCalculationService(
     }
 
     @Transactional(readOnly = true)
-    fun getCycleHistory(messId: String): List<PastCycleSummaryDto> {
+    fun getCycleHistory(messId: String, callerEmail: String? = null): List<PastCycleSummaryDto> {
+        if (callerEmail != null) {
+            val caller = userRepository.findByEmail(callerEmail)
+                .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Caller not found") }
+            membershipRepository.findByMessIdAndUserId(messId, caller.id)
+                .orElseThrow { ResponseStatusException(HttpStatus.FORBIDDEN, "You do not belong to this Mess") }
+        }
+
         val cycles = diningCycleRepository.findAllByMessIdOrderByCycleNumberDesc(messId)
         return cycles.map { cycle ->
             val calc = mealCalculationRepository.findByCycleId(cycle.id).orElse(null)

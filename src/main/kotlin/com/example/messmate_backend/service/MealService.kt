@@ -40,10 +40,23 @@ class MealService(
     private val diningCycleRepository: DiningCycleRepository,
     private val cycleConfigRepository: CycleConfigurationRepository,
     private val cyclePausedDayRepository: CyclePausedDayRepository,
-    private val userRepository: UserRepository
+    private val userRepository: UserRepository,
+    private val effectiveMealService: EffectiveMealService
 ) {
 
     private val dhakaZone = ZoneId.of("Asia/Dhaka")
+
+    private fun parseCutoffTime(cutoffTimeStr: String): LocalTime {
+        val trimmed = cutoffTimeStr.trim()
+        val formatter = java.time.format.DateTimeFormatterBuilder()
+            .appendPattern("[HH:mm][H:mm]")
+            .toFormatter()
+        return try {
+            LocalTime.parse(trimmed, formatter)
+        } catch (e: Exception) {
+            LocalTime.of(12, 0)
+        }
+    }
 
     @Transactional
     fun toggleMeal(userEmail: String, request: ToggleMealRequest): DailyMealStatusDto {
@@ -116,7 +129,7 @@ class MealService(
 
         // Cutoff time check in Asia/Dhaka
         if (mealDate.isEqual(today)) {
-            val cutoff = LocalTime.parse(cutoffTimeStr, DateTimeFormatter.ofPattern("HH:mm"))
+            val cutoff = parseCutoffTime(cutoffTimeStr)
             val now = LocalTime.now(dhakaZone)
             if (now.isAfter(cutoff)) {
                 throw ResponseStatusException(
@@ -126,26 +139,36 @@ class MealService(
             }
         }
 
-        // 5. Update or insert daily meal status
-        val existing = dailyMealStatusRepository.findByUserIdAndDateAndSession(user.id, mealDate, session)
-        val statusRecord: DailyMealStatus = if (existing.isPresent) {
-            val current = existing.get()
+        // 5. Update or insert daily meal status with concurrency resilience
+        val statusRecord: DailyMealStatus = try {
+            val existing = dailyMealStatusRepository.findByUserIdAndDateAndSession(user.id, mealDate, session)
+            if (existing.isPresent) {
+                val current = existing.get()
+                current.status = request.status
+                current.unitValue = unitVal
+                current.isAutoCarried = false
+                dailyMealStatusRepository.save(current)
+            } else {
+                val newStatus = DailyMealStatus(
+                    cycleId = cycle.id,
+                    messId = messId,
+                    userId = user.id,
+                    date = mealDate,
+                    session = session,
+                    status = request.status,
+                    unitValue = unitVal,
+                    isAutoCarried = false
+                )
+                dailyMealStatusRepository.save(newStatus)
+            }
+        } catch (ex: org.springframework.dao.DataIntegrityViolationException) {
+            // Concurrency race: another thread inserted between check and save; update existing
+            val current = dailyMealStatusRepository.findByUserIdAndDateAndSession(user.id, mealDate, session)
+                .orElseThrow { ex }
             current.status = request.status
             current.unitValue = unitVal
             current.isAutoCarried = false
             dailyMealStatusRepository.save(current)
-        } else {
-            val newStatus = DailyMealStatus(
-                cycleId = cycle.id,
-                messId = messId,
-                userId = user.id,
-                date = mealDate,
-                session = session,
-                status = request.status,
-                unitValue = unitVal,
-                isAutoCarried = false
-            )
-            dailyMealStatusRepository.save(newStatus)
         }
 
         return DailyMealStatusDto(
@@ -203,7 +226,7 @@ class MealService(
         }
 
         if (mealDate.isEqual(today)) {
-            val cutoff = LocalTime.parse(cutoffTimeStr, DateTimeFormatter.ofPattern("HH:mm"))
+            val cutoff = parseCutoffTime(cutoffTimeStr)
             val now = LocalTime.now(dhakaZone)
             if (now.isAfter(cutoff)) {
                 throw ResponseStatusException(
@@ -273,16 +296,68 @@ class MealService(
         val user = userRepository.findByEmail(userEmail)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "User not found") }
 
-        val list = dailyMealStatusRepository.findAllByUserIdAndDateBetweenOrderByDateAsc(user.id, startDate, endDate)
-        return list.map {
-            DailyMealStatusDto(
-                id = it.id,
-                date = it.date,
-                session = it.session,
-                status = it.status,
-                unitValue = it.unitValue,
-                isAutoCarried = it.isAutoCarried
-            )
+        val membership = membershipRepository.findByUserIdAndStatus(user.id, MembershipStatus.ACTIVE).orElse(null)
+            ?: return emptyList()
+
+        val messId = membership.messId
+        val activeCycle = diningCycleRepository.findFirstByMessIdAndStatus(messId, CycleStatus.ACTIVE)
+            .orElseGet {
+                diningCycleRepository.findFirstByMessIdAndStatus(messId, CycleStatus.EXPIRING).orElse(null)
+            }
+
+        val cycleConfig = activeCycle?.let { cycleConfigRepository.findByCycleId(it.id).orElse(null) }
+        val diningConfig = diningConfigRepository.findByMessId(messId).orElse(null)
+        val pausedDays = if (activeCycle != null) cyclePausedDayRepository.findAllByCycleId(activeCycle.id) else emptyList()
+
+        val persistedRows = dailyMealStatusRepository.findAllByUserIdAndDateBetweenOrderByDateAsc(user.id, startDate, endDate)
+        val persistedMap = persistedRows.associateBy { Pair(it.date, it.session) }
+
+        val result = mutableListOf<DailyMealStatusDto>()
+        var cursor = startDate
+        while (!cursor.isAfter(endDate)) {
+            val date = cursor
+            cursor = cursor.plusDays(1)
+
+            for (session in MealSession.entries) {
+                val persisted = persistedMap[Pair(date, session)]
+                if (persisted != null) {
+                    result.add(
+                        DailyMealStatusDto(
+                            id = persisted.id,
+                            date = persisted.date,
+                            session = persisted.session,
+                            status = persisted.status,
+                            unitValue = persisted.unitValue,
+                            isAutoCarried = persisted.isAutoCarried
+                        )
+                    )
+                } else {
+                    val effective = effectiveMealService.getEffectiveMealStatus(
+                        member = membership,
+                        date = date,
+                        session = session,
+                        cycleConfig = cycleConfig,
+                        diningConfig = diningConfig,
+                        pausedDays = pausedDays,
+                        persistedRow = null,
+                        forCalculation = false
+                    )
+                    // Only include sessions that are enabled
+                    if (effective.reason != "Session $session is disabled") {
+                        result.add(
+                            DailyMealStatusDto(
+                                id = "effective-${user.id}-$date-$session",
+                                date = date,
+                                session = session,
+                                status = effective.status,
+                                unitValue = effective.unitValue,
+                                isAutoCarried = effective.isAutoCarried
+                            )
+                        )
+                    }
+                }
+            }
         }
+        return result
     }
 }

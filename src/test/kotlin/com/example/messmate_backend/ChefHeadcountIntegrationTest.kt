@@ -222,7 +222,8 @@ class ChefHeadcountIntegrationTest {
         )
 
         // 1. Call the endpoint used by the Manager Dashboard "Meals to Prepare" card
-        val dashboardEndpointResponse = managerAndChefControllers.getChefHeadcount(mess.id, testDate)
+        val auth = org.springframework.security.authentication.UsernamePasswordAuthenticationToken(managerEmail, null)
+        val dashboardEndpointResponse = managerAndChefControllers.getChefHeadcount(mess.id, testDate, auth)
         assertEquals(org.springframework.http.HttpStatus.OK, dashboardEndpointResponse.statusCode)
         val dashboardData = dashboardEndpointResponse.body
         assertNotNull(dashboardData)

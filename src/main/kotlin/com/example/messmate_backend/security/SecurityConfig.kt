@@ -1,5 +1,6 @@
 package com.example.messmate_backend.security
 
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.http.HttpMethod
@@ -21,7 +22,9 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 @EnableWebSecurity
 @EnableMethodSecurity
 class SecurityConfig(
-    private val jwtAuthenticationFilter: JwtAuthenticationFilter
+    private val jwtAuthenticationFilter: JwtAuthenticationFilter,
+    @Value("\${cors.allowed-origins:http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,https://messmate-frontend.vercel.app}")
+    private val corsAllowedOrigins: String
 ) {
 
     @Bean
@@ -65,7 +68,10 @@ class SecurityConfig(
     @Bean
     fun corsConfigurationSource(): CorsConfigurationSource {
         val configuration = CorsConfiguration()
-        configuration.allowedOriginPatterns = listOf("*")
+        val origins = corsAllowedOrigins.split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        configuration.allowedOrigins = origins
         configuration.allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
         configuration.allowedHeaders = listOf("*")
         configuration.allowCredentials = true

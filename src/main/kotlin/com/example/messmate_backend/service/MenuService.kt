@@ -5,11 +5,7 @@ import com.example.messmate_backend.dto.WeeklyMenuDto
 import com.example.messmate_backend.entity.Menu
 import com.example.messmate_backend.entity.MenuItem
 import com.example.messmate_backend.model.enums.MealSession
-import com.example.messmate_backend.repository.DiningConfigurationRepository
-import com.example.messmate_backend.repository.MealSessionConfigRepository
-import com.example.messmate_backend.repository.MenuItemRepository
-import com.example.messmate_backend.repository.MenuRepository
-import com.example.messmate_backend.repository.MessRepository
+import com.example.messmate_backend.repository.*
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
@@ -26,7 +22,9 @@ class MenuService(
     private val menuItemRepository: MenuItemRepository,
     private val messRepository: MessRepository,
     private val diningConfigRepository: DiningConfigurationRepository,
-    private val sessionConfigRepository: MealSessionConfigRepository
+    private val sessionConfigRepository: MealSessionConfigRepository,
+    private val membershipRepository: MessMembershipRepository,
+    private val userRepository: UserRepository
 ) {
     private val logger = LoggerFactory.getLogger(MenuService::class.java)
 
@@ -138,8 +136,19 @@ class MenuService(
         itemName: String,
         description: String?,
         category: String?,
-        dietaryTags: List<String>
+        dietaryTags: List<String>,
+        callerEmail: String? = null
     ): MenuItemDto {
+        if (callerEmail != null) {
+            val caller = userRepository.findByEmail(callerEmail)
+                .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "User not found") }
+            val membership = membershipRepository.findByMessIdAndUserId(messId, caller.id)
+                .orElseThrow { ResponseStatusException(HttpStatus.FORBIDDEN, "You do not belong to this Mess") }
+            if (!membership.role.isOwnerOrManager) {
+                throw ResponseStatusException(HttpStatus.FORBIDDEN, "Only Mess Owner or Managers can add menu items")
+            }
+        }
+
         val enabledSessions = getActiveSessionsForMess(messId)
         if (session !in enabledSessions) {
             throw ResponseStatusException(
@@ -173,10 +182,22 @@ class MenuService(
     }
 
     @Transactional
-    fun deleteMenuItem(itemId: String) {
-        if (!menuItemRepository.existsById(itemId)) {
-            throw ResponseStatusException(HttpStatus.NOT_FOUND, "Menu item not found")
+    fun deleteMenuItem(itemId: String, callerEmail: String? = null) {
+        val item = menuItemRepository.findById(itemId)
+            .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Menu item not found") }
+
+        if (callerEmail != null) {
+            val menu = menuRepository.findById(item.menuId)
+                .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Menu not found") }
+            val caller = userRepository.findByEmail(callerEmail)
+                .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "User not found") }
+            val membership = membershipRepository.findByMessIdAndUserId(menu.messId, caller.id)
+                .orElseThrow { ResponseStatusException(HttpStatus.FORBIDDEN, "You do not belong to this Mess") }
+            if (!membership.role.isOwnerOrManager) {
+                throw ResponseStatusException(HttpStatus.FORBIDDEN, "Only Mess Owner or Managers can delete menu items")
+            }
         }
-        menuItemRepository.deleteById(itemId)
+
+        menuItemRepository.delete(item)
     }
 }

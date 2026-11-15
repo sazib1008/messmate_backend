@@ -98,6 +98,8 @@ data class CycleCalculationResult(
     val isFinal: Boolean,
     val isRateVolatile: Boolean = false,
     val volatilityReason: String? = null,
+    val isRateAnomalous: Boolean = false,
+    val rateWarning: String? = null,
     val memberSummaries: List<MemberSettlementSummary>
 )
 
@@ -267,6 +269,17 @@ object FinancialCalculationEngine {
             "Provisional rate — early cycle, rate will stabilize as more meals are logged (${totalCountedUnits.stripTrailingZeros().toPlainString()} units so far)"
         } else null
 
+        val countedDays = timeline.calculateCountedActiveDays(asOfDate)
+        val (isRateAnomalous, rateWarning) = when {
+            totalCountedUnits.compareTo(BigDecimal.ZERO) == 0 && mealVariableExpenses > BigDecimal.ZERO -> {
+                Pair(true, "Sanity Alert: 0 total meal units recorded despite ৳${mealVariableExpenses.setScale(2, RoundingMode.HALF_UP)} in variable meal expenses. Variable expenses cannot be distributed; check member meal defaults or attendance.")
+            }
+            mealRate > BigDecimal("500.00") && countedDays > 2 -> {
+                Pair(true, "Sanity Alert: Meal rate (৳${mealRate.setScale(2, RoundingMode.HALF_UP)}/unit) is unusually high with only ${totalCountedUnits.stripTrailingZeros().toPlainString()} units across $countedDays active days against ৳${mealVariableExpenses.setScale(2, RoundingMode.HALF_UP)} in variable expenses.")
+            }
+            else -> Pair(false, null)
+        }
+
         return CycleCalculationResult(
             totalExpenses = totalExpenses.setScale(2, RoundingMode.HALF_UP),
             mealVariableExpenses = mealVariableExpenses.setScale(2, RoundingMode.HALF_UP),
@@ -280,6 +293,8 @@ object FinancialCalculationEngine {
             isFinal = isFinal,
             isRateVolatile = isRateVolatile,
             volatilityReason = volatilityReason,
+            isRateAnomalous = isRateAnomalous,
+            rateWarning = rateWarning,
             memberSummaries = summaries
         )
     }
