@@ -71,7 +71,8 @@ class CycleCalculationService(
     private val balanceLedgerRepository: BalanceLedgerRepository,
     private val userRepository: UserRepository,
     private val diningConfigRepository: DiningConfigurationRepository,
-    private val notificationService: NotificationService
+    private val notificationService: NotificationService,
+    private val effectiveMealService: EffectiveMealService
 ) {
 
     private val dhakaZone = ZoneId.of("Asia/Dhaka")
@@ -206,10 +207,7 @@ class CycleCalculationService(
 
         // Cycle Configuration Snapshot
         val cycleConfig = cycleConfigRepository.findByCycleId(cycle.id).orElse(null)
-        val breakfastMultiplier = cycleConfig?.breakfastMultiplier ?: BigDecimal("0.50")
-        val lunchMultiplier = cycleConfig?.lunchMultiplier ?: BigDecimal("1.00")
-        val dinnerMultiplier = cycleConfig?.dinnerMultiplier ?: BigDecimal("1.00")
-        val combinedRule = cycleConfig?.combinedSessionRule ?: "SEPARATE"
+        val diningConfig = diningConfigRepository.findByMessId(messId).orElse(null)
 
         val pausedDays = cyclePausedDayRepository.findAllByCycleId(cycle.id)
         val timeline = CycleTimeline(
@@ -227,47 +225,22 @@ class CycleCalculationService(
         val expenses = expenseRepository.findAllByCycleIdOrderByExpenseDateDesc(cycle.id)
         val totalExpenses = expenses.fold(BigDecimal.ZERO) { acc, exp -> acc.add(exp.amount) }
 
-        // 3. Gather member data & calculate counted units based on CycleConfiguration rules
+        val today = LocalDate.now(dhakaZone)
+
+        // 3. Gather member data & calculate counted units based on unified EffectiveMealService rules
         val memberInputs = memberships.map { m ->
             val userId = m.userId
             val userMeals = dailyMealStatusRepository.findAllByUserIdAndCycleId(userId, cycle.id)
-                .filter { it.status == MealStatus.ON }
 
-            // Group by date for combined session calculations
-            var memberUnits = BigDecimal.ZERO
-            if (combinedRule == "LUNCH_DINNER_COMBINED") {
-                val mealsByDate = userMeals.groupBy { it.date }
-                for ((_, mealsForDay) in mealsByDate) {
-                    val hasBreakfast = mealsForDay.any { it.session == MealSession.BREAKFAST }
-                    val hasLunch = mealsForDay.any { it.session == MealSession.LUNCH }
-                    val hasDinner = mealsForDay.any { it.session == MealSession.DINNER }
-
-                    if (hasBreakfast) memberUnits = memberUnits.add(breakfastMultiplier)
-                    if (hasLunch && hasDinner) {
-                        memberUnits = memberUnits.add(BigDecimal("1.00")) // Lunch+Dinner combined = 1 meal
-                    } else if (hasLunch) {
-                        memberUnits = memberUnits.add(lunchMultiplier)
-                    } else if (hasDinner) {
-                        memberUnits = memberUnits.add(dinnerMultiplier)
-                    }
-                }
-            } else if (combinedRule == "FULL_DAY") {
-                val mealsByDate = userMeals.groupBy { it.date }
-                for ((_, mealsForDay) in mealsByDate) {
-                    val anyMeal = mealsForDay.isNotEmpty()
-                    if (anyMeal) memberUnits = memberUnits.add(BigDecimal("1.00"))
-                }
-            } else {
-                // Default: separate sessions using multipliers
-                for (meal in userMeals) {
-                    val mult = when (meal.session) {
-                        MealSession.BREAKFAST -> breakfastMultiplier
-                        MealSession.LUNCH -> lunchMultiplier
-                        MealSession.DINNER -> dinnerMultiplier
-                    }
-                    memberUnits = memberUnits.add(mult)
-                }
-            }
+            val memberUnits = effectiveMealService.calculateMemberCycleMealUnits(
+                member = m,
+                cycle = cycle,
+                cycleConfig = cycleConfig,
+                diningConfig = diningConfig,
+                pausedDays = pausedDays,
+                persistedRows = userMeals,
+                asOfDate = today
+            )
 
             val guestMeals = guestMealRepository.findAllByCycleIdAndHostUserId(cycle.id, userId)
             val guestUnits = guestMeals.fold(BigDecimal.ZERO) { acc, gm -> acc.add(gm.mealUnits) }

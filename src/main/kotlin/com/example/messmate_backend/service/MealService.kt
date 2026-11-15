@@ -40,7 +40,8 @@ class MealService(
     private val diningCycleRepository: DiningCycleRepository,
     private val cycleConfigRepository: CycleConfigurationRepository,
     private val cyclePausedDayRepository: CyclePausedDayRepository,
-    private val userRepository: UserRepository
+    private val userRepository: UserRepository,
+    private val effectiveMealService: EffectiveMealService
 ) {
 
     private val dhakaZone = ZoneId.of("Asia/Dhaka")
@@ -273,16 +274,68 @@ class MealService(
         val user = userRepository.findByEmail(userEmail)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "User not found") }
 
-        val list = dailyMealStatusRepository.findAllByUserIdAndDateBetweenOrderByDateAsc(user.id, startDate, endDate)
-        return list.map {
-            DailyMealStatusDto(
-                id = it.id,
-                date = it.date,
-                session = it.session,
-                status = it.status,
-                unitValue = it.unitValue,
-                isAutoCarried = it.isAutoCarried
-            )
+        val membership = membershipRepository.findByUserIdAndStatus(user.id, MembershipStatus.ACTIVE).orElse(null)
+            ?: return emptyList()
+
+        val messId = membership.messId
+        val activeCycle = diningCycleRepository.findFirstByMessIdAndStatus(messId, CycleStatus.ACTIVE)
+            .orElseGet {
+                diningCycleRepository.findFirstByMessIdAndStatus(messId, CycleStatus.EXPIRING).orElse(null)
+            }
+
+        val cycleConfig = activeCycle?.let { cycleConfigRepository.findByCycleId(it.id).orElse(null) }
+        val diningConfig = diningConfigRepository.findByMessId(messId).orElse(null)
+        val pausedDays = if (activeCycle != null) cyclePausedDayRepository.findAllByCycleId(activeCycle.id) else emptyList()
+
+        val persistedRows = dailyMealStatusRepository.findAllByUserIdAndDateBetweenOrderByDateAsc(user.id, startDate, endDate)
+        val persistedMap = persistedRows.associateBy { Pair(it.date, it.session) }
+
+        val result = mutableListOf<DailyMealStatusDto>()
+        var cursor = startDate
+        while (!cursor.isAfter(endDate)) {
+            val date = cursor
+            cursor = cursor.plusDays(1)
+
+            for (session in MealSession.entries) {
+                val persisted = persistedMap[Pair(date, session)]
+                if (persisted != null) {
+                    result.add(
+                        DailyMealStatusDto(
+                            id = persisted.id,
+                            date = persisted.date,
+                            session = persisted.session,
+                            status = persisted.status,
+                            unitValue = persisted.unitValue,
+                            isAutoCarried = persisted.isAutoCarried
+                        )
+                    )
+                } else {
+                    val effective = effectiveMealService.getEffectiveMealStatus(
+                        member = membership,
+                        date = date,
+                        session = session,
+                        cycleConfig = cycleConfig,
+                        diningConfig = diningConfig,
+                        pausedDays = pausedDays,
+                        persistedRow = null,
+                        forCalculation = false
+                    )
+                    // Only include sessions that are enabled
+                    if (effective.reason != "Session $session is disabled") {
+                        result.add(
+                            DailyMealStatusDto(
+                                id = "effective-${user.id}-$date-$session",
+                                date = date,
+                                session = session,
+                                status = effective.status,
+                                unitValue = effective.unitValue,
+                                isAutoCarried = effective.isAutoCarried
+                            )
+                        )
+                    }
+                }
+            }
         }
+        return result
     }
 }

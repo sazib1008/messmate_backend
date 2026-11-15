@@ -25,7 +25,9 @@ class ChefService(
     private val sessionConfigRepository: MealSessionConfigRepository,
     private val membershipRepository: MessMembershipRepository,
     private val diningCycleRepository: DiningCycleRepository,
-    private val cyclePausedDayRepository: CyclePausedDayRepository
+    private val cycleConfigRepository: CycleConfigurationRepository,
+    private val cyclePausedDayRepository: CyclePausedDayRepository,
+    private val effectiveMealService: EffectiveMealService
 ) {
 
     @Transactional(readOnly = true)
@@ -39,6 +41,7 @@ class ChefService(
                 diningCycleRepository.findFirstByMessIdAndStatus(messId, CycleStatus.EXPIRING).orElse(null)
             }
 
+        val cycleConfig = activeCycle?.let { cycleConfigRepository.findByCycleId(it.id).orElse(null) }
         val pausedDays = if (activeCycle != null) cyclePausedDayRepository.findAllByCycleId(activeCycle.id) else emptyList()
         val fullDayPause = pausedDays.firstOrNull { it.pausedDate == date && it.session == null }
 
@@ -117,28 +120,24 @@ class ChefService(
                     servingEndTime = cfg?.servingEndTime
                 )
             } else {
-                // Default ON/OFF status from DiningConfiguration for this session
-                val defaultSessionOn = when (session) {
-                    MealSession.BREAKFAST -> diningConfig?.defaultBreakfastOn ?: false
-                    MealSession.LUNCH -> diningConfig?.defaultLunchOn ?: true
-                    MealSession.DINNER -> diningConfig?.defaultDinnerOn ?: true
-                }
-
                 // Explicit meal status records in DB for this mess, date, session
                 val explicitStatuses = dailyMealStatusRepository.findAllByMessIdAndDateAndSession(messId, date, session)
                 val explicitMap = explicitStatuses.associateBy { it.userId }
 
-                // Count members effectively ON:
-                // 1) Active members: explicit status if exists, otherwise mess default for this session
-                // 2) Any additional member who explicitly booked ON (safeguard)
+                // Count members effectively ON using unified EffectiveMealService
                 val activeMemberUserIds = activeDiningMembers.map { it.userId }.toSet()
                 val activeMembersOnCount = activeDiningMembers.count { member ->
-                    val record = explicitMap[member.userId]
-                    if (record != null) {
-                        record.status == MealStatus.ON
-                    } else {
-                        defaultSessionOn
-                    }
+                    val effective = effectiveMealService.getEffectiveMealStatus(
+                        member = member,
+                        date = date,
+                        session = session,
+                        cycleConfig = cycleConfig,
+                        diningConfig = diningConfig,
+                        pausedDays = pausedDays,
+                        persistedRow = explicitMap[member.userId],
+                        forCalculation = false
+                    )
+                    effective.status == MealStatus.ON
                 }
 
                 val additionalExplicitOnCount = explicitStatuses
