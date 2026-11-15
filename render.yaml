@@ -14,7 +14,7 @@ services:
       - key: SHOW_SQL
         value: false
       - key: JWT_SECRET
-        generateValue: true
+        sync: false
       - key: JWT_EXPIRATION
         value: 604800000
       - key: DB_MAX_POOL_SIZE

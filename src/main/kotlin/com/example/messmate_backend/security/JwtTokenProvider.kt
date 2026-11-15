@@ -15,6 +15,16 @@ class JwtTokenProvider(
     @Value("\${jwt.secret}") private val jwtSecret: String,
     @Value("\${jwt.expiration}") private val jwtExpirationMs: Long
 ) {
+    init {
+        require(jwtSecret.isNotBlank()) {
+            "JWT_SECRET environment variable is missing or blank. Please configure a secure 256-bit secret."
+        }
+        val secretBytes = jwtSecret.toByteArray(StandardCharsets.UTF_8)
+        require(secretBytes.size >= 32) {
+            "JWT_SECRET must be at least 256 bits (32 bytes) long. Current length: ${secretBytes.size} bytes."
+        }
+    }
+
     private val key: SecretKey by lazy {
         Keys.hmacShaKeyFor(jwtSecret.toByteArray(StandardCharsets.UTF_8))
     }
