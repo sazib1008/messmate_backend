@@ -506,7 +506,17 @@ class MessService(
     }
 
     @Transactional
-    fun updateDiningConfig(messId: String, newCarryForward: Boolean?, sessionUpdates: List<SessionConfigDto>?): DiningConfigDto {
+    fun updateDiningConfig(messId: String, newCarryForward: Boolean?, sessionUpdates: List<SessionConfigDto>?, callerEmail: String? = null): DiningConfigDto {
+        if (callerEmail != null) {
+            val caller = userRepository.findByEmail(callerEmail)
+                .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "User not found") }
+            val membership = membershipRepository.findByMessIdAndUserId(messId, caller.id)
+                .orElseThrow { ResponseStatusException(HttpStatus.FORBIDDEN, "You do not belong to this Mess") }
+            if (!membership.role.isOwnerOrManager) {
+                throw ResponseStatusException(HttpStatus.FORBIDDEN, "Only Mess Owner or Managers can update dining config")
+            }
+        }
+
         val config = diningConfigRepository.findByMessId(messId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Dining configuration not found") }
 

@@ -78,7 +78,14 @@ class CycleCalculationService(
     private val dhakaZone = ZoneId.of("Asia/Dhaka")
 
     @Transactional
-    fun getActiveCycle(messId: String): ActiveCycleDto {
+    fun getActiveCycle(messId: String, callerEmail: String? = null): ActiveCycleDto {
+        if (callerEmail != null) {
+            val caller = userRepository.findByEmail(callerEmail)
+                .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Caller not found") }
+            membershipRepository.findByMessIdAndUserId(messId, caller.id)
+                .orElseThrow { ResponseStatusException(HttpStatus.FORBIDDEN, "You do not belong to this Mess") }
+        }
+
         val today = LocalDate.now(dhakaZone)
 
         // Find current active or expiring cycle
@@ -164,7 +171,17 @@ class CycleCalculationService(
     }
 
     @Transactional
-    fun pauseDay(request: PauseDayRequest): ActiveCycleDto {
+    fun pauseDay(request: PauseDayRequest, callerEmail: String? = null): ActiveCycleDto {
+        if (callerEmail != null) {
+            val caller = userRepository.findByEmail(callerEmail)
+                .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Caller not found") }
+            val membership = membershipRepository.findByMessIdAndUserId(request.messId, caller.id)
+                .orElseThrow { ResponseStatusException(HttpStatus.FORBIDDEN, "You do not belong to this Mess") }
+            if (!membership.role.isOwnerOrManager) {
+                throw ResponseStatusException(HttpStatus.FORBIDDEN, "Only Mess Owner or Managers can pause dining days")
+            }
+        }
+
         val cycle = diningCycleRepository.findFirstByMessIdAndStatus(request.messId, CycleStatus.ACTIVE)
             .orElseGet {
                 diningCycleRepository.findFirstByMessIdAndStatus(request.messId, CycleStatus.EXPIRING)
@@ -194,7 +211,22 @@ class CycleCalculationService(
     }
 
     @Transactional
-    fun calculateAndSave(messId: String, isFinal: Boolean = false, confirmForfeitSurplus: Boolean = false): CycleCalculationResult {
+    fun calculateAndSave(
+        messId: String,
+        isFinal: Boolean = false,
+        confirmForfeitSurplus: Boolean = false,
+        callerEmail: String? = null
+    ): CycleCalculationResult {
+        if (callerEmail != null) {
+            val caller = userRepository.findByEmail(callerEmail)
+                .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Caller not found") }
+            val membership = membershipRepository.findByMessIdAndUserId(messId, caller.id)
+                .orElseThrow { ResponseStatusException(HttpStatus.FORBIDDEN, "You do not belong to this Mess") }
+            if (isFinal && !membership.role.isOwnerOrManager) {
+                throw ResponseStatusException(HttpStatus.FORBIDDEN, "Only Mess Owner or Managers can finalize cycle settlement")
+            }
+        }
+
         // Fetch cycle (ACTIVE, EXPIRING, or FINALIZING)
         val cycle = diningCycleRepository.findFirstByMessIdAndStatus(messId, CycleStatus.ACTIVE)
             .orElseGet {
@@ -557,7 +589,14 @@ class CycleCalculationService(
     }
 
     @Transactional(readOnly = true)
-    fun getCycleHistory(messId: String): List<PastCycleSummaryDto> {
+    fun getCycleHistory(messId: String, callerEmail: String? = null): List<PastCycleSummaryDto> {
+        if (callerEmail != null) {
+            val caller = userRepository.findByEmail(callerEmail)
+                .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Caller not found") }
+            membershipRepository.findByMessIdAndUserId(messId, caller.id)
+                .orElseThrow { ResponseStatusException(HttpStatus.FORBIDDEN, "You do not belong to this Mess") }
+        }
+
         val cycles = diningCycleRepository.findAllByMessIdOrderByCycleNumberDesc(messId)
         return cycles.map { cycle ->
             val calc = mealCalculationRepository.findByCycleId(cycle.id).orElse(null)

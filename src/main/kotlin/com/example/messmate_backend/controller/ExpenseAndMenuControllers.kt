@@ -30,8 +30,11 @@ class ExpenseController(
     }
 
     @GetMapping
-    fun listExpenses(@RequestParam messId: String): ResponseEntity<List<ExpenseDto>> {
-        return ResponseEntity.ok(expenseService.listExpenses(messId))
+    fun listExpenses(
+        @RequestParam messId: String,
+        @AuthenticationPrincipal userDetails: UserDetails
+    ): ResponseEntity<List<ExpenseDto>> {
+        return ResponseEntity.ok(expenseService.listExpenses(messId, userDetails.username))
     }
 
     @PutMapping("/{id}")
@@ -83,7 +86,10 @@ class MenuController(
 
     @PostMapping("/items")
     @PreAuthorize("hasAnyRole('OWNER', 'PRIMARY_MANAGER', 'MANAGER')")
-    fun createMenuItem(@RequestBody request: CreateMenuItemRequest): ResponseEntity<MenuItemDto> {
+    fun createMenuItem(
+        @RequestBody request: CreateMenuItemRequest,
+        @AuthenticationPrincipal userDetails: UserDetails
+    ): ResponseEntity<MenuItemDto> {
         val created = menuService.createMenuItem(
             messId = request.messId,
             dayOfWeek = request.dayOfWeek,
@@ -91,15 +97,19 @@ class MenuController(
             itemName = request.itemName,
             description = request.description,
             category = request.category,
-            dietaryTags = request.dietaryTags
+            dietaryTags = request.dietaryTags,
+            callerEmail = userDetails.username
         )
         return ResponseEntity.status(HttpStatus.CREATED).body(created)
     }
 
     @DeleteMapping("/items/{id}")
     @PreAuthorize("hasAnyRole('OWNER', 'PRIMARY_MANAGER', 'MANAGER')")
-    fun deleteMenuItem(@PathVariable id: String): ResponseEntity<Map<String, String>> {
-        menuService.deleteMenuItem(id)
+    fun deleteMenuItem(
+        @PathVariable id: String,
+        @AuthenticationPrincipal userDetails: UserDetails
+    ): ResponseEntity<Map<String, String>> {
+        menuService.deleteMenuItem(id, userDetails.username)
         return ResponseEntity.ok(mapOf("message" to "Menu item deleted successfully"))
     }
 }

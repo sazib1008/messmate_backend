@@ -18,14 +18,20 @@ class CycleController(
 ) {
 
     @GetMapping("/active")
-    fun getActiveCycle(@RequestParam messId: String): ResponseEntity<ActiveCycleDto> {
-        return ResponseEntity.ok(calculationService.getActiveCycle(messId))
+    fun getActiveCycle(
+        @RequestParam messId: String,
+        authentication: Authentication
+    ): ResponseEntity<ActiveCycleDto> {
+        return ResponseEntity.ok(calculationService.getActiveCycle(messId, authentication.name))
     }
 
     @PostMapping("/pause-day")
     @PreAuthorize("hasAnyRole('OWNER', 'PRIMARY_MANAGER', 'MANAGER')")
-    fun pauseDay(@RequestBody request: PauseDayRequest): ResponseEntity<ActiveCycleDto> {
-        return ResponseEntity.ok(calculationService.pauseDay(request))
+    fun pauseDay(
+        @RequestBody request: PauseDayRequest,
+        authentication: Authentication
+    ): ResponseEntity<ActiveCycleDto> {
+        return ResponseEntity.ok(calculationService.pauseDay(request, authentication.name))
     }
 
     @PostMapping("/new")
@@ -39,8 +45,11 @@ class CycleController(
     }
 
     @GetMapping("/history")
-    fun getCycleHistory(@RequestParam messId: String): ResponseEntity<List<PastCycleSummaryDto>> {
-        return ResponseEntity.ok(calculationService.getCycleHistory(messId))
+    fun getCycleHistory(
+        @RequestParam messId: String,
+        authentication: Authentication
+    ): ResponseEntity<List<PastCycleSummaryDto>> {
+        return ResponseEntity.ok(calculationService.getCycleHistory(messId, authentication.name))
     }
 }
 
@@ -56,13 +65,26 @@ class CalculationController(
 ) {
 
     @GetMapping("/preview")
-    fun previewCalculation(@RequestParam messId: String): ResponseEntity<CycleCalculationResult> {
-        return ResponseEntity.ok(calculationService.calculateAndSave(messId, isFinal = false))
+    fun previewCalculation(
+        @RequestParam messId: String,
+        authentication: Authentication
+    ): ResponseEntity<CycleCalculationResult> {
+        return ResponseEntity.ok(calculationService.calculateAndSave(messId, isFinal = false, callerEmail = authentication.name))
     }
 
     @PostMapping("/finalize")
     @PreAuthorize("hasAnyRole('OWNER', 'PRIMARY_MANAGER', 'MANAGER')")
-    fun finalizeCalculation(@RequestBody request: FinalizeCycleRequest): ResponseEntity<CycleCalculationResult> {
-        return ResponseEntity.ok(calculationService.calculateAndSave(request.messId, isFinal = true, confirmForfeitSurplus = request.confirmForfeitSurplus))
+    fun finalizeCalculation(
+        @RequestBody request: FinalizeCycleRequest,
+        authentication: Authentication
+    ): ResponseEntity<CycleCalculationResult> {
+        return ResponseEntity.ok(
+            calculationService.calculateAndSave(
+                request.messId,
+                isFinal = true,
+                confirmForfeitSurplus = request.confirmForfeitSurplus,
+                callerEmail = authentication.name
+            )
+        )
     }
 }

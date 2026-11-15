@@ -10,7 +10,9 @@ import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.server.ResponseStatusException
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 @Service
 class ExpenseService(
@@ -19,6 +21,8 @@ class ExpenseService(
     private val membershipRepository: MessMembershipRepository,
     private val userRepository: UserRepository
 ) {
+
+    private val dhakaZone = ZoneId.of("Asia/Dhaka")
 
     /**
      * Throws HTTP 409 Conflict if the expense's parent cycle has status COMPLETED (settled).
@@ -53,7 +57,8 @@ class ExpenseService(
                     .orElseThrow { ResponseStatusException(HttpStatus.BAD_REQUEST, "No active dining cycle found for Meal") }
             }
 
-        validateExpenseInput(request.title, request.amount)
+        validateExpenseInput(request.title, request.amount, request.expenseDate)
+        validateMessMembers(messId, request.targetMemberId, request.participantIds)
 
         val expense = Expense(
             cycleId = cycle.id,
@@ -91,7 +96,14 @@ class ExpenseService(
     }
 
     @Transactional(readOnly = true)
-    fun listExpenses(messId: String): List<ExpenseDto> {
+    fun listExpenses(messId: String, callerEmail: String? = null): List<ExpenseDto> {
+        if (callerEmail != null) {
+            val caller = userRepository.findByEmail(callerEmail)
+                .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "User not found") }
+            membershipRepository.findByMessIdAndUserId(messId, caller.id)
+                .orElseThrow { ResponseStatusException(HttpStatus.FORBIDDEN, "You do not belong to this Mess") }
+        }
+
         val expenses = expenseRepository.findAllByMessIdOrderByExpenseDateDesc(messId)
         return expenses.map {
             ExpenseDto(
@@ -132,7 +144,8 @@ class ExpenseService(
         // Guard: cannot edit an expense from a concluded/settled cycle
         assertCycleNotCompleted(expense.cycleId)
 
-        validateExpenseInput(request.title, request.amount)
+        validateExpenseInput(request.title, request.amount, request.expenseDate)
+        validateMessMembers(expense.messId, request.targetMemberId, request.participantIds)
 
         expense.category = request.category.canonicalCategory
         expense.title = request.title.trim()
@@ -190,7 +203,7 @@ class ExpenseService(
         expenseRepository.delete(expense)
     }
 
-    private fun validateExpenseInput(title: String, amount: java.math.BigDecimal) {
+    private fun validateExpenseInput(title: String, amount: java.math.BigDecimal, expenseDate: LocalDate? = null) {
         val trimmed = title.trim()
         if (trimmed.length < 3) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Expense title must be at least 3 characters long")
@@ -209,6 +222,22 @@ class ExpenseService(
         }
         if (amount > java.math.BigDecimal("10000000")) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Expense amount exceeds maximum allowable ceiling of ৳10,000,000")
+        }
+        if (expenseDate != null && expenseDate.isAfter(LocalDate.now(dhakaZone))) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Expense date cannot be in the future")
+        }
+    }
+
+    private fun validateMessMembers(messId: String, targetMemberId: String?, participantIds: List<String>?) {
+        if (!targetMemberId.isNullOrBlank()) {
+            membershipRepository.findByMessIdAndUserId(messId, targetMemberId)
+                .orElseThrow { ResponseStatusException(HttpStatus.BAD_REQUEST, "Target member $targetMemberId does not belong to this Mess") }
+        }
+        if (!participantIds.isNullOrEmpty()) {
+            for (pId in participantIds) {
+                membershipRepository.findByMessIdAndUserId(messId, pId)
+                    .orElseThrow { ResponseStatusException(HttpStatus.BAD_REQUEST, "Participant $pId does not belong to this Mess") }
+            }
         }
     }
 }

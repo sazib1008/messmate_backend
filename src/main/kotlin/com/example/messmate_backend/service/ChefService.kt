@@ -27,11 +27,19 @@ class ChefService(
     private val diningCycleRepository: DiningCycleRepository,
     private val cycleConfigRepository: CycleConfigurationRepository,
     private val cyclePausedDayRepository: CyclePausedDayRepository,
+    private val userRepository: UserRepository,
     private val effectiveMealService: EffectiveMealService
 ) {
 
     @Transactional(readOnly = true)
-    fun getDailyHeadcount(messId: String, date: LocalDate): ChefDailyHeadcountResponse {
+    fun getDailyHeadcount(messId: String, date: LocalDate, callerEmail: String? = null): ChefDailyHeadcountResponse {
+        if (callerEmail != null) {
+            val caller = userRepository.findByEmail(callerEmail)
+                .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Caller not found") }
+            membershipRepository.findByMessIdAndUserId(messId, caller.id)
+                .orElseThrow { ResponseStatusException(HttpStatus.FORBIDDEN, "You do not belong to this Mess") }
+        }
+
         val mess = messRepository.findById(messId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Mess not found with ID: $messId") }
 
