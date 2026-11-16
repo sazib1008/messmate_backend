@@ -23,7 +23,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 @EnableMethodSecurity
 class SecurityConfig(
     private val jwtAuthenticationFilter: JwtAuthenticationFilter,
-    @Value("\${cors.allowed-origins:http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,https://messmate-frontend.vercel.app}")
+    @Value("\${cors.allowed-origins:http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,https://messmatebd.vercel.app,https://messmate-frontend.vercel.app,https://*.vercel.app}")
     private val corsAllowedOrigins: String
 ) {
 
@@ -71,7 +71,7 @@ class SecurityConfig(
         val origins = corsAllowedOrigins.split(",")
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-        configuration.allowedOrigins = origins
+        configuration.allowedOriginPatterns = origins
         configuration.allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
         configuration.allowedHeaders = listOf("*")
         configuration.allowCredentials = true
